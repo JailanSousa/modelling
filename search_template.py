@@ -13,7 +13,7 @@ def search(file):
                                    query=file,
                                    db="/home/jssousa/pdbdb/pdbaa",
                                    outfmt=outfmt,        
-                                   out=f'pep_blastp_search.csv'
+                                   out=f'blastp_search.csv'
                                    )
     print('\nRunning....\n')
     stdout, stderr = blastp()

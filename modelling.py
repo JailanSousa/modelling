@@ -2,13 +2,18 @@ import re
 import urllib
 import os
 import pandas as pd
+import glob
+
+from tqdm import tqdm
 from modeller import *
 from modeller.automodel import *
 
 from best_template import best_hits
-from tqdm import tqdm
+
 
 class Modelling:
+
+    """This class take blast search and peforme a comparative with modeller."""
     
     def __init__(self, tfile) -> None:
         
@@ -21,6 +26,8 @@ class Modelling:
 
     def get_template(self):
 
+        """Select the best templates based on blast metrics (cuttoff)"""
+
         bad_templates = []
         templates = []
         for i in range(len(self.hits)):
@@ -29,6 +36,9 @@ class Modelling:
             pident = self.hits.pident[i]
             qcov = self.hits.qcov[i]
             
+            # Identinty greater than 25%
+            # Cover equal or greater than 70%
+            # evalue equal or lower than 0.0001
             cutoff = pident >= 25 and qcov >= 60 and evalue < 0.8
         
             if cutoff:
@@ -54,17 +64,17 @@ class Modelling:
                 bad_templates.append(templates_info)
         
         df = pd.DataFrame(bad_templates)
-        #df.to_csv(f'{self.templates_dir}/bad_templates.csv', index=False)
         
         return pd.DataFrame(templates), df
     
     def download_templates(self):
 
-        templates_dir = f"{self.BASE_DIR}/templates"
+        """Download templates in pdb format."""
         
+        # Template directory
+        templates_dir = f"{self.BASE_DIR}/templates"
         if not os.path.exists(templates_dir):
             os.mkdir(templates_dir)
-
 
         templates = self.get_template()[0]
         
@@ -84,11 +94,14 @@ class Modelling:
                 self.__writelog(log_msg, cod=pdb_id[0])
         
     def create_pir(self):
+
+        """Create file which is modeller input file."""
         
         templates = self.get_template()[0]
         hits = self.hits
-        pir_dir = f'{self.BASE_DIR}/ali'
         
+        # Pir directory
+        pir_dir = f'{self.BASE_DIR}/ali'
         if not os.path.exists(pir_dir):
             os.mkdir(pir_dir)
         
@@ -101,6 +114,7 @@ class Modelling:
                     f_name = hits.qseqid[i]
                     seq = re.sub('_', '', hits.qseq[i])
                     
+                    # Pir file format
                     ali = f">P1;{f_name}\n" + \
                         f"sequence:{f_name}:::::::0.00: 0.00\n" + \
                         f"{seq}*"
@@ -110,23 +124,27 @@ class Modelling:
         
     def modelling(self):
         
+        """Comparative modelling. create 5 models."""
+
         templates = self.get_template()[0]
-        tst = self.create_pir()
+        bad_template = self.get_template()[1]
+        self.create_pir()
         
         template_dir = f"{self.BASE_DIR}/templates"
         pir_dir = f'{self.BASE_DIR}/ali'
 
-
+        # Aligment directory
         aligments_dir = f'{self.BASE_DIR}/aligments'
         if not os.path.exists(aligments_dir):
             os.mkdir(aligments_dir)
 
+        # Models directory
         models_dir = f'{self.BASE_DIR}/models'
         if not os.path.exists(models_dir):
             os.mkdir(models_dir)
         
         outputs = []
-        for i in range(len(templates)):
+        for i in tqdm(range(len(templates)), desc='Modelling'):
             
             pdb_id = templates.pdb_id[i]
             qseqid = templates.qseqid[i]
@@ -139,7 +157,7 @@ class Modelling:
                     
                 print('template found')
 
-                # Alignment 
+                # Alignments 
                 env = Environ()
                 aln = Alignment(env)
                 mdl = Model(env, file=template, 
@@ -155,8 +173,8 @@ class Modelling:
                 aln.write(file=f'{aligments_dir}/{qseqid}_{pdb_id}.pap', 
                           alignment_format='PAP')
                 
-
                 # Modelling
+                # Query directory inside models directory
                 models = f'{models_dir}/{qseqid}'
                 if not os.path.exists(models):
                     os.mkdir(models)
@@ -171,43 +189,49 @@ class Modelling:
                 a.make()
                 outputs.extend(a.outputs)
 
-                # Move outputs for models directory
+                # Move outputs to models directory
                 os.system(f'mv {qseqid}* /{models}')
             
-
+        bad_template.to_csv(f'{self.BASE_DIR}/bad_templates.csv', index=False)
         return pd.DataFrame(outputs)
     
     def best_model(self):
 
+        """Select the best model based on  
+        Discrete Optimized Protein Energy (DOPE score)"""
+
         outputs = self.modelling()
         code = [''.join(re.findall(r'.+(?=\.B)', x)) for x in outputs.name]
         outputs['Code'] = code
+        lowestdope = outputs.loc[outputs.groupby('Code')['DOPE score'].idxmin(), :]
+        best = lowestdope.reset_index(drop=True)
         failure = outputs[outputs.failure == None]
-        best = outputs.loc[outputs.groupby('Code')['DOPE score'].idxmin(), :]
-        print(best)
 
-        """best_models_dir = f'{self.BASE_DIR}/best_models'"""
+        # Best models directory
+        best_models_dir = f'{self.BASE_DIR}/best_models'
+        if not os.path.exists(best_models_dir):
+            os.mkdir(best_models_dir)
 
-    """ if not os.path.exists(best_models_dir):
-            os.mkdir(best_models_dir)"""
+        # move the best models from models to best_model directory
+        models_dir = f'{self.BASE_DIR}/models/*/*.pdb'
+        filer_names = glob.glob(models_dir)
 
-        #models_dir = f'{self.BASE_DIR}/models/*'
+        for i in range(len(best)):
+            for f in filer_names:
+                file = ''.join(re.findall(r'.*/([^/]+)$', f))
 
-        # Get a list of all successfully built models from a.outputs
-    """ ok_models = [x for x in a.outputs if x['failure'] is None]
-        failures = [x for x in a.outputs if x['failure'] is not None]"""
+                if best.name[i] == file:
+                    os.system(f'mv {f} /{best_models_dir}')
 
-        # Rank the models by DOPE score
-    """key = 'DOPE score'
-        ok_models.sort(key=lambda a: a[key])"""
+        # Register models failures.
+        failure.to_csv(f'{self.BASE_DIR}/models_failure.csv', index=False)
 
-        # Get top model
-    """m = ok_models[0]
-        if os.path.exists(f'{models_dir}/*.pdb'):"""
+def run(file):
 
-
+    modelling = Modelling(file)
+    modelling.download_templates()
+    modelling.best_model()
 
 tfile = 'blastp_tst_out.csv'         
-modelling = Modelling(tfile)
-modelling.download_templates()
-modelling.best_model()
+
+run(tfile)

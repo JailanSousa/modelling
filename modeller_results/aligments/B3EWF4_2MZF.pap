@@ -1,0 +1,9 @@
+ _aln.pos         10        20        30        40        50        60
+2MZFA     AKACTPLLHDCS--HDRHSCCRGDMFKYVCDCFYPEGEDKTEVCSCQQPKS-------HKIAEKIIDK 
+B3EWF4    ARECIPLYNDCTAFKYNNNCCKDPEKKYQYKCSCIVCKEGKEQCTCQRKETVESMMKCVRFVKKVGEK 
+ _consrvd *  * **  **        **     **   *         * * **                *   *
+
+ _aln.p   70
+2MZFA     AKTTL 
+B3EWF4    VIEKV 
+ _consrvd
