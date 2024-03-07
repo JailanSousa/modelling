@@ -39,7 +39,7 @@ class Modelling:
             # Identinty greater than 25%
             # Cover equal or greater than 70%
             # evalue equal or lower than 0.0001
-            cutoff = pident >= 25 and qcov >= 60 and evalue < 0.8
+            cutoff = pident >= 25 and qcov >= 70 and evalue < 0.0001
         
             if cutoff:
             
