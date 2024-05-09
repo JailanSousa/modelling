@@ -1,30 +1,75 @@
+import warnings
+warnings.filterwarnings("ignore")
+
 import re
+import sys
 import urllib
 import os
 import pandas as pd
 import glob
 
+from Bio.Blast.Applications import NcbiblastpCommandline
 from tqdm import tqdm
 from modeller import *
 from modeller.automodel import *
 
-from best_template import best_hits
-
-
+tempalte_db_path = '/home/jssousa/mestrado/modeling_pep/pdbaa/pdbaa'
 class Modelling:
 
     """This class take blast search and peforme a comparative with modeller."""
     
-    def __init__(self, tfile) -> None:
+    def __init__(self, fasta='', pident=70, qcov=70,
+                evalue=0.0001, models=5, db=tempalte_db_path) -> None:
         
-        self.tfile = tfile
-        self.hits = best_hits(self.tfile)
+        self.fasta = fasta
+        self.pident = int(pident)
+        self.qcov = int(qcov)
+        self.evalue = float(evalue)
+        self.models = int(models)
+        self.db = db
+        #self.tfile = tfile
+        self.hits = None #best_hits(self.tfile)
         self.BASE_DIR = f'{os.getcwd()}/modeller_results'
 
         if not os.path.exists(f"{self.BASE_DIR}"):
             os.mkdir(f"{self.BASE_DIR}")
+    
+    def search_template(self):
+        """blastp search."""
+        
+        # fields returned in output file
+        outfmt = "10 qseqid sseqid evalue bitscore pident qcovs qseq sseq"
+                         
+        blastp = NcbiblastpCommandline(task='blastp',
+                                   query=self.fasta,
+                                   db=self.db,
+                                   outfmt=outfmt,        
+                                   out=f'blastp_search.csv'
+                                   )
+        print('\nRunning....\n')
+        stdout, stderr = blastp()
+
+    def best_hits(self):
+
+        """Select the best blast results based on blast output metrics."""
+        colnames = ['qseqid', 'sseqid','evalue', 
+                    'bitscore', 'pident', 'qcovs', 'qseq', 'sseq']
+        self.search_template()
+    
+        blast = pd.read_csv('blastp_search.csv', names=colnames, header=None)
+
+        comboscore = blast['pident'] + blast['qcovs'] + blast['bitscore'] - blast['evalue']
+
+        blast['combo'] = comboscore
+
+        hits = blast.loc[blast.groupby('qseqid')['combo'].idxmax(), :]
+
+        hits.drop('combo', axis=1, inplace=True)
+        return hits.reset_index(drop=True)
+
 
     def get_template(self):
+        self.hits = self.best_hits()
 
         """Select the best templates based on blast metrics (cuttoff)"""
 
@@ -32,14 +77,14 @@ class Modelling:
         templates = []
         for i in range(len(self.hits)):
 
-            evalue = self.hits.evalue[i]
-            pident = self.hits.pident[i]
-            qcov = self.hits.qcov[i]
+            evalue = float(self.hits.evalue[i])
+            pident = int(self.hits.pident[i])
+            qcov = int(self.hits.qcovs[i])
             
             # Identinty greater than 25%
             # Cover equal or greater than 70%
             # evalue equal or lower than 0.0001
-            cutoff = pident >= 25 and qcov >= 70 and evalue < 0.0001
+            cutoff = pident >= self.pident and qcov >= self.qcov and evalue < self.evalue
         
             if cutoff:
             
@@ -124,10 +169,11 @@ class Modelling:
         
     def modelling(self):
         
-        """Comparative modelling. create 5 models."""
+        """Comparative modelling."""
 
         templates = self.get_template()[0]
         bad_template = self.get_template()[1]
+        self.download_templates()
         self.create_pir()
         
         template_dir = f"{self.BASE_DIR}/templates"
@@ -185,7 +231,7 @@ class Modelling:
                             assess_methods=(assess.DOPE, assess.GA341))
                 
                 a.starting_model = 1
-                a.ending_model = 5
+                a.ending_model = self.models
                 a.make()
                 outputs.extend(a.outputs)
 
@@ -199,7 +245,6 @@ class Modelling:
 
         """Select the best model based on  
         Discrete Optimized Protein Energy (DOPE score)"""
-
         outputs = self.modelling()
         code = [''.join(re.findall(r'.+(?=\.B)', x)) for x in outputs.name]
         outputs['Code'] = code
@@ -226,12 +271,50 @@ class Modelling:
         # Register models failures.
         failure.to_csv(f'{self.BASE_DIR}/models_failure.csv', index=False)
 
-def run(file):
+    def run(self):
+        
+        """Set flags and run modelling"""
+        argument = ''
+        try:
+            for i, arg in enumerate(sys.argv):
+                if i % 2 == 1:
+                    argument = arg
+                    if argument == '-h' or argument == '--help':
+                        print("""HELP:
+                              -i --input file name in fasta or multfasta format.
+                              -id --identity identity cutoff (default 70%)
+                              -c --cover coverence cutoff (default 70%)
+                              -e --evalue e-valiue cutoff (default 0.0001)
+                              -m --models models quantity to be generated
+                              -db --database path to the templates structure
+                              """)
+                        break
+                elif i % 2 == 0 and i != 0:
+                    value = arg
+                    if argument == '-i' or argument == '--input':
+                        self.fasta = value
+                    elif argument == '-id' or argument == '--identity':
+                        self.pident = int(value)
+                    elif argument == '-c' or argument == '--cover':
+                        self.qcov = int(value)
+                    elif argument == '-e' or argument == '--evalue':
+                        self.evalue = float(value)
+                    elif argument == '-m' or argument == '--models':
+                        self.models = int(value)
+                    elif argument == '-db' or argument == '--database':
+                       self.db = value
+        except: 
+            print('Look the instructions')
+        
+        if argument != '-h' and argument != '--help':
+            self.best_model()
+            os.system(f"rm -r {self.BASE_DIR}/templates")
+            os.system(f"rm -r {self.BASE_DIR}/ali")
+            os.system(f"rm -r {self.BASE_DIR}/aligments")
+            os.system(f"rm -r {self.BASE_DIR}/models")
 
-    modelling = Modelling(file)
-    modelling.download_templates()
-    modelling.best_model()
+            
 
-tfile = 'blastp_tst_out.csv'         
 
-run(tfile)
+modelling = Modelling()
+modelling.run()
